@@ -1,0 +1,358 @@
+---
+title: "Random Number Generation"
+subtitle: "HW 6 of STAT 5361 Statistical Computing"
+author: Biju Wang^[<bijuwang@uconn.edu>]
+date: "`r format(Sys.Date(), '%m/%d/%Y')`"
+header-includes: 
+  \usepackage{float}
+  \usepackage{algorithm}
+  \usepackage{algpseudocode}
+  \floatplacement{figure}{H}
+output: 
+  pdf_document:
+    number_sections: true
+---
+
+# Rejecion Sampling
+## Normalizing Constant for $g$
+Since we have the following intergral
+\begin{align*}
+\int^{\infty}_{0}(2x^{\theta-1}+x^{\theta-\frac{1}{2}})e^{-x}dx & =2\int^{\infty}_{0}x^{\theta-1}e^{-x}dx+\int^{\infty}_{0}x^{\theta-\frac{1}{2}}e^{-x}dx\\
+   & =2\Gamma(\theta)+\Gamma(\theta+\frac{1}{2})
+\end{align*}
+Obviously
+$$C=\frac{1}{2\Gamma(\theta)+\Gamma(\theta+\frac{1}{2})}$$
+Therefore
+$$g(x)=\frac{2\Gamma(\theta)}{2\Gamma(\theta)+\Gamma(\theta+\frac{1}{2})}\frac{1}{\Gamma(\theta)}x^{\theta-1}e^{-x}+\frac{\Gamma(\theta+\frac{1}{2})}{2\Gamma(\theta)+\Gamma(\theta+\frac{1}{2})}\frac{1}{\Gamma(\theta+\frac{1}{2})}x^{\theta-\frac{1}{2}}e^{-x}$$
+Thus, $g(x)$ is a mixuture of Gamma distributions. The component distributions are Gamma$(\theta, 1)$ and Gamma$(\theta+\frac{1}{2}, 1)$, the corresponding weights are $\frac{2\Gamma(\theta)}{2\Gamma(\theta)+\Gamma(\theta+\frac{1}{2})}$ and $\frac{\Gamma(\theta+\frac{1}{2})}{2\Gamma(\theta)+\Gamma(\theta+\frac{1}{2})}$.
+
+## Sampling from $g(x)$
+The pseudo-code is as follows
+\begin{algorithm}
+\begin{algorithmic}[1]
+\Procedure{My Procedure}{}
+\State Sample $U$ from U$(0, 1)$
+\If{$U < \frac{2\Gamma(\theta)}{2\Gamma(\theta)+\Gamma(\theta+\frac{1}{2})}$}
+\State Sample $X$ from Gamma$(\theta, 1)$
+\Else
+\State Sample $X$ from Gamma$(\theta+\frac{1}{2}, 1)$
+\EndIf
+\State\Return $X$
+\EndProcedure
+\end{algorithmic}
+\caption{Sampling from $g(x)$}
+\end{algorithm}
+
+```{r, message = FALSE, fig.asp=.5, fig.pos = "H", fig.cap = "Histogram, Kernel Curve and True Curve for Generated Samples from $g(x)$ with $\\theta=1$"}
+sample.g <- function(n, shape, scale, prob){
+  x <- rep(0, n)
+  u <- runif(n, 0, 1)
+  g1 <- rgamma(n, shape = shape[1], scale = scale[1])
+  g2 <- rgamma(n, shape = shape[2], scale = scale[2])
+  
+  x[u < prob] <- g1[u < prob]
+  x[u >= prob] <- g2[u >= prob]
+  
+  x
+}
+
+theta <- 1
+prob <- 2 * gamma(theta)/(2 * gamma(theta) + gamma(theta + 1/2))
+shape <- c(theta, theta + 1/2)
+scale <- c(1, 1)
+n <- 10000
+
+g <- function(x, theta){
+    (2 * x^(theta - 1) * exp(-x) + x^(theta - 1/2) * exp(-x))/(2 * gamma(theta) + gamma(theta + 1/2))
+}
+
+x <- sample.g(n, shape, scale, prob)
+
+library("ggplot2")
+ggplot(data.frame(x = x), aes(x = x)) +
+geom_histogram(aes(y=..density..), color = "black", alpha = 0.2) +
+geom_density(aes(x, color = "a")) +
+stat_function(aes(x, color = "b"), fun = function(x) g(x, theta = theta)) +
+scale_colour_manual(name = "Legend", values = c("a" = "blue", "b" = "red"),
+                    labels = c("Kernel", "True")) +
+labs(x = expression("Values of"~x), y = expression("Density of"~g(x))) +
+theme(plot.title = element_text(hjust = 0.5)) +
+ggtitle(expression("Gamma Mixture Distribution with"~theta==1))
+```
+
+## Sampling from $f(x)$ via Rejection Sampling
+Since our target density is $f(x)$ and $f(x)\varpropto q(x)=\sqrt{4+x}x^{\theta-1}e^{-x}$ and the instrumental density is $g(x)$, we first calculate the minimal $\alpha$ such that $q(x)\leqslant\alpha g(x)$.
+\begin{align*}
+\alpha & =\sup_{x>0}\frac{q(x)}{g(x)}\\
+       & =\sup_{x>0}\frac{\sqrt{4+x}x^{\theta-1}e^{-x}}{C(2x^{\theta-1}+x^{\theta-\frac{1}{2}})e^{-x}}\\
+       & =\sup_{x>0}\frac{\sqrt{4+x}}{C\sqrt{x}}\\
+       & =\frac{1}{C}
+\end{align*}
+Therefore
+$$q(x)=\sqrt{4+x}x^{\theta-1}e^{-x}\leqslant \alpha g(x)=\frac{1}{C}g(x)=(2x^{\theta-1}+x^{\theta-\frac{1}{2}})e^{-x}$$
+The pseudo-code is as follows
+\begin{algorithm}
+\begin{algorithmic}[1]
+\Procedure{My Procedure}{}
+\State Sample $X$ from $g(x)$ and $U$ from U$(0, 1)$\label{sample}
+\If{$U \leqslant \frac{q(X)}{\alpha g(X)}$}
+\State\Return $X$
+\Else
+\State Go back to \ref{sample}
+\EndIf
+\EndProcedure
+\end{algorithmic}
+\caption{Sampling from $f(x)$}
+\end{algorithm}
+
+```{r, message = FALSE, fig.asp=.5, fig.pos = "H", fig.cap = "Histogram, Kernel Curve and True Curve for Generated Samples from $f(x)$ with $\\theta=1$"}
+sample.f <- function(n, shape, scale, prob){
+  sample <- rep(0, n)
+  iter <- 1
+  
+  while (iter <= n) {
+      x <- sample.g(1, shape, scale, prob)
+      u <- runif(1, 0, 1)
+      if(u <= sqrt(4 + x)/(2 + sqrt(x))){
+        sample[iter] <- x
+        iter <- iter + 1
+      } 
+  }
+  sample
+}
+
+theta <- 1
+prob <- 2 * gamma(theta)/(2 * gamma(theta) + gamma(theta + 1/2))
+shape <- c(theta, theta + 1/2)
+scale <- c(1, 1)
+n <- 10000
+
+h <- function(x, theta){
+  sqrt(4 + x) * x^(theta - 1) * exp(-x)
+}
+integral <- integrate(function(x) h(x, theta = theta), 0, Inf)
+
+f <- function(x, theta){
+  sqrt(4 + x) * x^(theta - 1) * exp(-x)/integral$value
+}
+
+x <- sample.f(n, shape, scale, prob)
+
+library("ggplot2")
+ggplot(data.frame(x = x), aes(x = x)) +
+geom_histogram(aes(y=..density..), color = "black", alpha = 0.2) +
+geom_density(aes(x, color = "a")) +
+stat_function(aes(x, color = "b"), fun = function(x) f(x, theta = theta)) +
+scale_colour_manual(name = "Legend", values = c("a" = "blue", "b" = "red"),
+                    labels = c("Kernel", "True")) +
+labs(x = expression("Values of"~x), y = expression("Density of"~f(x))) +
+theme(plot.title = element_text(hjust = 0.5)) +
+ggtitle(expression("Distribution of"~f(x)~"with"~theta==1))
+```
+
+
+# Mixture of Beta
+## Treating $f(x)$ as a Whole and Using Rejection Sampling
+It's easy to see
+$$q(x)=\frac{x^{\theta-1}}{1+x^{2}}+\sqrt{2+x^{2}}(1-x)^{\beta-1}\leqslant x^{\theta-1}+2(1-x)^{\beta-1}$$
+One intuitive way to choose mixed Beta distributions(here we choose $\lambda=\frac{1}{2}$) is
+$$g(x)=\lambda \text{Beta}(\theta, 1)+(1-\lambda)\text{Beta}(1, \beta)=\frac{\lambda}{\theta}x^{\theta-1}+\frac{1-\lambda}{\beta}(1-x)^{\beta-1}=\frac{1}{2\theta}x^{\theta-1}+\frac{1}{2\beta}(1-x)^{\beta-1}$$
+And select $\alpha=\max\{2\theta, 4\beta\}$. The following inequality is straightforward
+$$q(x)=\frac{x^{\theta-1}}{1+x^{2}}+\sqrt{2+x^{2}}(1-x)^{\beta-1}\leqslant x^{\theta-1}+2(1-x)^{\beta-1}\leqslant\alpha g(x)$$
+The pseudo-code is as follows
+\begin{algorithm}
+\begin{algorithmic}[1]
+\Procedure{My Procedure}{}
+\State Sample $U$ from U$(0, 1)$\label{sample}
+\If{$U<\lambda$}
+\State Sample $X$ from Beta$(\theta, 1)$
+\Else
+\State Sample $X$ from Beta$(1, \beta)$
+\EndIf
+
+\State Sample $U_{1}$ from U$(0, 1)$
+\If{$U_{1}\leqslant\frac{q(X)}{\alpha g(X)}$}
+\State\Return $X$
+\Else
+\State Go back to \ref{sample}
+\EndIf
+\EndProcedure
+\end{algorithmic}
+\caption{Sampling from $f(x)$ with treating $f(x)$ as a whole}
+\end{algorithm}
+
+```{r, message = FALSE, fig.asp=.4, fig.pos = "H", fig.cap = "Histogram, Kernel Curve and True Curve for Generated Samples from $f(x)$ with $\\theta=2$, $\\beta=2$"}
+sample.g <- function(n, shape1, shape2, prob){
+  x <- rep(0, n)
+  u <- runif(n, 0, 1)
+  g1 <- rbeta(n, shape1 = shape1[1], shape2 = shape2[1])
+  g2 <- rbeta(n, shape1 = shape1[2], shape2 = shape2[2])
+  
+  x[u < prob] <- g1[u < prob]
+  x[u >= prob] <- g2[u >= prob]
+  
+  x
+}
+
+sample.f <- function(n, shape1, shape2, prob){
+  sample <- rep(0, n)
+  iter <- 1
+  alpha <- max(shape1[1] * 2, shape2[2] * 4)
+  
+  while (iter <= n) {
+      x <- sample.g(1, shape1, shape2, prob)
+      u <- runif(1, 0, 1)
+      
+      q <- x ^ (shape1[1] - 1)/(1 + x^2) + sqrt(2 + x^2) * (1 - x)^(shape2[2] - 1)
+      g <- (1/2) * dbeta(x, shape1 = shape1[1], shape2 = shape2[1]) + 
+        (1/2) * dbeta(x, shape1 = shape1[2], shape2 = shape2[2])
+      
+      if(u <= q/(alpha * g)){
+        sample[iter] <- x
+        iter <- iter + 1
+      } 
+  }
+  sample
+}
+
+theta <- 2
+beta <- 2
+prob <- 1/2
+
+shape1 <- c(theta, 1)
+shape2 <- c(1, beta)
+n <- 10000
+
+
+h <- function(x, theta, beta){
+  x ^ (theta - 1)/(1 + x^2) + sqrt(2 + x^2) * (1 - x)^(beta - 1)
+}
+integral <- integrate(function(x) h(x, theta = theta, beta = beta), 0, 1)
+
+f <- function(x, theta, beta){
+  (x ^ (theta - 1)/(1 + x^2) + sqrt(2 + x^2) * (1 - x)^(beta - 1))/integral$value
+}
+
+x <- sample.f(n, shape1, shape2, prob)
+
+library("ggplot2")
+ggplot(data.frame(x = x), aes(x = x)) +
+geom_histogram(aes(y=..density..), color = "black", alpha = 0.2) +
+geom_density(aes(x, color = "a")) +
+stat_function(aes(x, color = "b"), fun = function(x) f(x, theta = theta, beta = beta)) +
+scale_colour_manual(name = "Legend", values = c("a" = "blue", "b" = "red"),
+                    labels = c("Kernel", "True")) +
+labs(x = expression("Values of"~x), y = expression("Density of"~f(x))) +
+theme(plot.title = element_text(hjust = 0.5)) +
+ggtitle(expression(paste(" Distribution of ", f(x), " with ", theta==2, ", ", beta==2 )))
+```
+
+## Treating $f(x)$ as the Sum of Two Functions and Using Rejection Sampling
+Let's define
+\begin{align*}
+q_{1}(x) & =\frac{x^{\theta-1}}{1+x^{2}} & q_{2}(x) & =\sqrt{2+x^{2}}(1-x)^{\beta-1}\\
+g_{1}(x) & =\frac{1}{\theta}x^{\theta-1} & g_{2}(x) & =\frac{1}{\beta}(1-x)^{\beta-1}\\
+\alpha_{1} & =\theta & \alpha_{2} & =\sqrt{3}\beta
+\end{align*}
+
+Thus
+\begin{gather*}
+f(x)\varpropto q_{1}(x)+q_{2}(x)\\
+q_{1}(x)\leqslant \alpha_{1}g_{1}(x) \qquad q_{2}\leqslant \alpha_{2}g_{2}(x)\\
+\end{gather*}
+
+The pseudo-code is as follows
+\begin{algorithm}
+\begin{algorithmic}[1]
+\Procedure{My Procedure}{}
+\State Sample $U$ from U$(0, 1)$\label{sample}
+
+\If{$U<\frac{\alpha_{1}}{\alpha_{1}+\alpha_{2}}$}
+\State Sample $X$ from $g_{1}(x)$ and $U_{1}$ from U$(0, 1)$
+\If{$U_{1}\leqslant\frac{q_{1}(X)}{\alpha_{1}g_{1}(X)}$}
+\State\Return $X$
+\Else
+\State Go back to \ref{sample}
+\EndIf
+
+\Else
+\State Sample $X$ from $g_{2}(x)$ and $U_{2}$ from U$(0, 1)$
+\If{$U_{2}\leqslant\frac{q_{2}(X)}{\alpha_{2}g_{2}(X)}$}
+\State\Return $X$
+\Else
+\State Go back to \ref{sample}
+\EndIf
+
+\EndIf
+\EndProcedure
+\end{algorithmic}
+\caption{Sampling from $f(x)$ with treating $f(x)$ as the sum of two functions}
+\end{algorithm}
+
+```{r, message = FALSE, fig.asp=.4, fig.pos = "H", fig.cap = "Histogram, Kernel Curve and True Curve for Generated Samples from $f(x)$ with $\\theta=2$, $\\beta=2$"}
+sample.f <- function(n, shape1, shape2){
+  sample <- rep(0, n)
+  iter <- 1
+  alpha1 <- shape1[1]
+  alpha2 <- sqrt(3) * shape2[2]
+  prob <- alpha1/(alpha1 + alpha2)
+  
+  while (iter <= n) {
+    u <- runif(1, 0, 1)
+    
+    if(u < prob){
+      x <- rbeta(1, shape1 = shape1[1], shape2 = shape2[1])
+      u1 <- runif(1, 0, 1)
+      
+      if(u1 <= 1/(1 + x^2)){
+        sample[iter] <- x
+        iter <- iter + 1
+      }
+    }
+    else{
+      x <- rbeta(1, shape1 = shape1[2], shape2 = shape2[2])
+      u2 <- runif(1, 0, 1)
+      
+      if(u2 <= sqrt(2 + x^2)/sqrt(3)){
+        sample[iter] <- x
+        iter <- iter + 1
+      }
+    }
+  }
+  sample
+}
+
+theta <- 2
+beta <- 2
+
+shape1 <- c(theta, 1)
+shape2 <- c(1, beta)
+n <- 10000
+
+
+h <- function(x, theta, beta){
+  x ^ (theta - 1)/(1 + x^2) + sqrt(2 + x^2) * (1 - x)^(beta - 1)
+}
+integral <- integrate(function(x) h(x, theta = theta, beta = beta), 0, 1)
+
+f <- function(x, theta, beta){
+  (x ^ (theta - 1)/(1 + x^2) + sqrt(2 + x^2) * (1 - x)^(beta - 1))/integral$value
+}
+
+x <- sample.f(n, shape1, shape2)
+
+library("ggplot2")
+ggplot(data.frame(x = x), aes(x = x)) +
+geom_histogram(aes(y=..density..), color = "black", alpha = 0.2) +
+geom_density(aes(x, color = "a")) +
+stat_function(aes(x, color = "b"), fun = function(x) f(x, theta = theta, beta = beta)) +
+scale_colour_manual(name = "Legend", values = c("a" = "blue", "b" = "red"),
+                    labels = c("Kernel", "True")) +
+labs(x = expression("Values of"~x), y = expression("Density of"~f(x))) +
+theme(plot.title = element_text(hjust = 0.5)) +
+ggtitle(expression(paste(" Distribution of ", f(x), " with ", theta==2, ", ", beta==2 )))
+```
+
+
+
+
